@@ -1,98 +1,43 @@
-name: Build-OpenWrt-BandPush
+name: Build BandPush
 
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: '请填写发布Releases的版本号（留空不发布）'
-        required: false
-        default: ''
-      text:
-        description: '请填写发布的说明'
-        required: false
-        default: ''
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  TAG: "${{ github.event.inputs.tag }}"
-  TZ: Asia/Shanghai
-
-permissions:
-  contents: write
 
 jobs:
   build:
-    name: Build ${{ matrix.arch }}-${{ matrix.sdk }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: aarch64_cortex-a72
-            sdk: 22.03.7
-          - arch: aarch64_cortex-a72
-            sdk: SNAPSHOT
-          - arch: x86_64
-            sdk: 22.03.7
-          - arch: x86_64
-            sdk: SNAPSHOT
+          - name: x86_64
+            sdk_url: https://downloads.openwrt.org/releases/22.03.7/targets/x86/64/openwrt-sdk-22.03.7-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+
+          - name: aarch64_cortex-a72
+            sdk_url: https://downloads.openwrt.org/releases/22.03.7/targets/armsr/armv8/openwrt-sdk-22.03.7-armsr-armv8_gcc-11.2.0_musl.Linux-x86_64.tar.xz
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          path: mypackage
 
-      - name: Building packages
-        uses: openwrt/gh-action-sdk@main
-        env:
-          ARCH: ${{ matrix.arch }}-${{ matrix.sdk }}
-          FEEDNAME: packages_ci
-          PACKAGES: luci-app-bandpush
-          NO_REFRESH_CHECK: 1
-          NO_SHFMT_CHECK: 1
-          MAKEFLAGS: -j$(nproc)
-          V: s
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.arch }}-${{ matrix.sdk }}
-          path: bin/packages/${{ matrix.arch }}/packages_ci/*
-
-  release:
-    name: Publish Release
-    runs-on: ubuntu-latest
-    needs: build
-    if: ${{ github.event.inputs.tag != '' }}
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Prepare release info
+      - name: Download SDK
         run: |
-          sudo timedatectl set-timezone "Asia/Shanghai"
-          mkdir -p release
-          for dir in artifacts/*; do
-            name=$(basename "$dir")
-            zip -j "release/BandPush-${{ env.TAG }}-${name}.zip" "$dir"/*.ipk "$dir"/*.apk 2>/dev/null || true
-          done
+          wget -q ${{ matrix.sdk_url }}
+          tar xf openwrt-sdk-*.tar.xz
+          mv openwrt-sdk-* sdk
 
-      - name: Release
-        uses: softprops/action-gh-release@v2
+      - name: Copy package
+        run: |
+          cp -r mypackage/luci-app-bandpush sdk/package/
+
+      - name: Build
+        run: |
+          cd sdk
+          make package/luci-app-bandpush/compile V=s -j$(nproc)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          body: |
-            > ### BandPush ${{ env.TAG }}
-            > 编译时间: ${{ github.event.inputs.text }}
-
-            - **`22.03.7`** 里面是 ipk 安装包
-            - **`SNAPSHOT`** 里面是 apk 安装包
-
-          tag_name: ${{ env.TAG }}
-          files: release/*.zip
+          name: ${{ matrix.name }}
+          path: sdk/bin/packages/**/luci-app-bandpush*.ipk
