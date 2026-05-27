@@ -11,29 +11,40 @@ jobs:
       matrix:
         include:
           - name: x86_64
-            sdk_url: https://downloads.openwrt.org/releases/22.03.7/targets/x86/64/openwrt-sdk-22.03.7-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+            target: x86/64
 
           - name: aarch64_cortex-a72
-            sdk_url: https://downloads.openwrt.org/releases/22.03.7/targets/armsr/armv8/openwrt-sdk-22.03.7-armsr-armv8_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+            target: armsr/armv8
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: mypackage
 
-      - name: Download SDK
+      - name: Get SDK URL
         run: |
-          wget -q ${{ matrix.sdk_url }}
-          tar xf openwrt-sdk-*.tar.xz
+          URL="https://downloads.openwrt.org/releases/22.03.7/targets/${{ matrix.target }}/"
+          echo "Listing SDK files from: $URL"
+          curl -sL "$URL" | grep -oP 'openwrt-sdk[^"]*Linux-x86_64.tar.xz' | head -5
+          FILE=$(curl -sL "$URL" | grep -oP 'openwrt-sdk[^"]*Linux-x86_64.tar.xz' | head -1)
+          echo "SDK_FILE=$FILE" >> $GITHUB_ENV
+          echo "SDK_URL=${URL}${FILE}" >> $GITHUB_ENV
+
+      - name: Download and Extract SDK
+        run: |
+          echo "Downloading: ${{ env.SDK_URL }}"
+          wget -q "${{ env.SDK_URL }}" || {
+            echo "Download failed, trying alternative..."
+            wget "${{ env.SDK_URL }}" -O sdk.tar.xz
+          }
+          tar xf *.tar.xz
           mv openwrt-sdk-* sdk
 
       - name: Copy package
-        run: |
-          cp -r mypackage/luci-app-bandpush sdk/package/
+        run: cp -r luci-app-bandpush sdk/package/
 
       - name: Build
         run: |
           cd sdk
+          ./scripts/feeds update -a 2>/dev/null || true
           make package/luci-app-bandpush/compile V=s -j$(nproc)
 
       - name: Upload artifact
